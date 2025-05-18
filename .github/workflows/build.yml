@@ -1,0 +1,49 @@
+name: dump_runner
+
+on:
+  push:
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.txt"
+  pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.txt"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  payload-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential clang-18 lld-18 xxd yasm nasm
+
+      - name: Install toolchain
+        run: |
+          wget https://github.com/ps5-payload-dev/pacbrew-repo/releases/latest/download/ps5-payload-dev.tar.gz
+          sudo tar xf ps5-payload-dev.tar.gz -C /
+
+      - name: Build Payload
+        run: |
+          export PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk
+          /opt/ps5-payload-sdk/bin/prospero-cmake CMakeLists.txt
+          make
+
+      - name: Upload Payload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dump_runner
+          path: |
+            ./dump_runner.elf
+            ./homebrew.js
+          if-no-files-found: error
