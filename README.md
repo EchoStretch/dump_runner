@@ -9,7 +9,7 @@ Run homebrew games on your PS5 using the Kstuff, Websrv payloads and Homebrew La
 1. **Copy your homebrew folder** to:
    - `/data/homebrew/`  
    - `/mnt/usb#/homebrew/` *(replace `#` with your USB number, e.g., `usb0`, `usb1`, etc.)*
-   - `/mnt/ext#/homebrew/` *(replace `#` with your USB number, e.g., `ext0`, `ext1`, etc.)*
+   - `/mnt/ext#/homebrew/` *(replace `#` with your EXT number, e.g., `ext0`, `ext1`, etc.)*
 
 2. **Inside each homebrew game folder**, add:
    - `dump_runner.elf`
