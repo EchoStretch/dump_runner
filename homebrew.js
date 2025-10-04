@@ -7,11 +7,11 @@ async function main() {
     const param = await resp.json();
 
     var name = '';
-    for(const key in param.localizedParameters) {
-	if(key.startsWith('en-')) {
-	    name = param.localizedParameters[key]['titleName'];
-	    break;
-	}
+    for (const key in param.localizedParameters) {
+        if (key.startsWith('en-')) {
+            name = param.localizedParameters[key]['titleName'];
+            break;
+        }
     }
 
     return {
