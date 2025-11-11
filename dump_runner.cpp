@@ -1,14 +1,24 @@
 #include <dirent.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
 #include <sys/_iovec.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
+#include <sys/user.h>
 
 #define IOVEC_ENTRY(x) {x ? (char *)x : 0, x ? strlen(x) + 1 : 0}
 #define IOVEC_SIZE(x) (sizeof(x) / sizeof(struct iovec))
+
+typedef struct app_info {
+  uint32_t app_id;
+  uint64_t unknown1;
+  char title_id[14];
+  char unknown2[0x3c];
+} app_info_t;
 
 typedef struct app_launch_ctx
 {
@@ -25,6 +35,7 @@ extern "C"
   int sceUserServiceGetForegroundUser(uint32_t *);
   void sceUserServiceTerminate(void);
   int sceSystemServiceLaunchApp(const char *, char **, app_launch_ctx_t *);
+  int sceKernelGetAppInfo(pid_t, app_info_t*);
 }
 
 int remount_system_ex(void)
@@ -119,12 +130,83 @@ int chmod_bins(const char *path)
   return 0;
 }
 
+pid_t find_pid(const char* title_id)
+{
+  int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PROC, 0};
+  app_info_t appinfo;
+  size_t buf_size;
+  char *buf;
+  pid_t pid;
+
+  if (sysctl(mib, 4, NULL, &buf_size, NULL, 0))
+  {
+    return -1;
+  }
+
+  buf = (char*) malloc(buf_size);
+  if (!buf)
+  {
+    return -1;
+  }
+
+  if (sysctl(mib, 4, buf, &buf_size, NULL, 0))
+  {
+    free(buf);
+    return -1;
+  }
+
+  pid = -1;
+  for (char *ptr = buf; ptr < (buf+buf_size);)
+  {
+    struct kinfo_proc *ki = (struct kinfo_proc*) ptr;
+    ptr += ki->ki_structsize;
+
+    if (sceKernelGetAppInfo(ki->ki_pid, &appinfo))
+    {
+      continue;
+    }
+
+    if (!strcmp(title_id, appinfo.title_id))
+    {
+      pid = ki->ki_pid;
+      break;
+    }
+  }
+
+  free(buf);
+
+  return pid;
+}
+
+int wait_for_exit(pid_t pid)
+{
+  int kq = kqueue();
+  struct kevent evt;
+
+  if (kq == -1) {
+    return -1;
+  }
+
+  EV_SET(&evt, pid, EVFILT_PROC, EV_ADD, NOTE_EXIT, 0, NULL);
+  if (kevent(kq, &evt, 1, NULL, 0, NULL) == -1) {
+    return -1;
+  }
+
+  if (kevent(kq, NULL, 0, &evt, 1, NULL) == -1) {
+    return -1;
+  }
+
+  return 0;
+}
+
+
 int main(int argc, char *argv[])
 {
-  app_launch_ctx_t ctx = {0};
+  app_launch_ctx_t ctx = {.structsize = sizeof(app_launch_ctx_t)};
   char src[PATH_MAX + 1];
   char dst[PATH_MAX + 1];
   const char *title_id;
+  pid_t pid;
 
   if (argc < 2)
   {
@@ -150,5 +232,12 @@ int main(int argc, char *argv[])
   mount_nullfs(src, dst);
   chmod_bins(src);
 
-  return sceSystemServiceLaunchApp(title_id, &argv[2], &ctx);
+  sceSystemServiceLaunchApp(title_id, &argv[2], &ctx);
+  pid = find_pid(title_id);
+
+  if(!wait_for_exit(pid)) {
+    sleep(3);
+  }
+
+  return unmount(dst, 0);
 }

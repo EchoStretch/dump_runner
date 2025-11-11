@@ -1,5 +1,5 @@
 async function main() {
-    const CWD = window.workingDir
+    const CWD = window.workingDir;
     const PAYLOAD = CWD + '/dump_runner.elf';
     const PARAM_URL = baseURL + '/fs/' + CWD + '/sce_sys/param.json';
     
