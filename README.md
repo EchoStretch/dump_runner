@@ -24,6 +24,19 @@ Run homebrew games on your PS5 using the Kstuff, Websrv payloads and Homebrew La
 
 ---
 
+### 📌 Auto Enabled/Disable kstuff
+   From `https://github.com/EchoStretch/kstuff-toggle`\
+   `kstuff` is automatically disabled on launching the game,\
+   And then enabled after closing the game.\
+   If `kstuff-toggle` is not set or <= 0, the auto mode is disabled.\
+   You can still use the manual toggle
+   - `kstuff-toggle=[n]` wait `n` seconds then disable `kstuff`
+   - Change `homebrew.js`
+   - from `args: [PAYLOAD, param['titleId']],`
+   - to `args: [PAYLOAD, param['titleId'], 'kstuff-toggle=30'],`
+
+---
+
 ### 📌 Example Folder Structure
 
 `/data/homebrew/MyHomebrewGame/`, `/mnt/usb0/homebrew/MyHomebrewGame/` or `/mnt/ext0/homebrew/MyHomebrewGame/`
