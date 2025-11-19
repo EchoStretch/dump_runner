@@ -194,6 +194,7 @@ int main(int argc, char *argv[])
   int kq;
   struct kevent evt;
   int nev = -1;
+  int arg_shift = 0;
 
   if (argc < 2)
   {
@@ -206,6 +207,7 @@ int main(int argc, char *argv[])
     size_t len = strlen("kstuff-toggle=");
     if (strncmp(argv[2], "kstuff-toggle=", len) == 0) {
       kstuff = atoi(argv[2] + len);
+      arg_shift = 1;
     }
   }
 
@@ -232,7 +234,7 @@ int main(int argc, char *argv[])
   mount_nullfs(src, dst);
   chmod_bins(src);
 
-  sceSystemServiceLaunchApp(title_id, &argv[2], &ctx);
+  sceSystemServiceLaunchApp(title_id, &argv[2 + arg_shift], &ctx);
   pid = find_pid(title_id);
 
   if (pid != -1 && (kq = kqueue()) != -1) {
