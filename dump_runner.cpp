@@ -210,6 +210,11 @@ int main(int argc, char *argv[])
   }
 
   title_id = argv[1];
+  if (find_pid(title_id) != -1) {
+    printf("%s is already running", title_id);
+    return 0;
+  }
+
   getcwd(src, PATH_MAX);
 
   strcpy(dst, "/system_ex/app/");
