@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/user.h>
+#include <sys/time.h>
 
 #define IOVEC_ENTRY(x) {x ? (char *)x : 0, x ? strlen(x) + 1 : 0}
 #define IOVEC_SIZE(x) (sizeof(x) / sizeof(struct iovec))
@@ -178,27 +179,7 @@ pid_t find_pid(const char* title_id)
   return pid;
 }
 
-int wait_for_exit(pid_t pid)
-{
-  int kq = kqueue();
-  struct kevent evt;
-
-  if (kq == -1) {
-    return -1;
-  }
-
-  EV_SET(&evt, pid, EVFILT_PROC, EV_ADD, NOTE_EXIT, 0, NULL);
-  if (kevent(kq, &evt, 1, NULL, 0, NULL) == -1) {
-    return -1;
-  }
-
-  if (kevent(kq, NULL, 0, &evt, 1, NULL) == -1) {
-    return -1;
-  }
-
-  return 0;
-}
-
+int kstuff_toggle(int enable);
 
 int main(int argc, char *argv[])
 {
@@ -208,13 +189,34 @@ int main(int argc, char *argv[])
   const char *title_id;
   pid_t pid;
 
+  int kstuff = 0;
+  int counter = 0;
+  int kq;
+  struct kevent evt;
+  int nev = -1;
+  int arg_shift = 0;
+
   if (argc < 2)
   {
     printf("Usage: %s TITLE_ID\n", argv[0]);
     return -1;
   }
 
+  if (argc >= 3)
+  {
+    size_t len = strlen("kstuff-toggle=");
+    if (strncmp(argv[2], "kstuff-toggle=", len) == 0) {
+      kstuff = atoi(argv[2] + len);
+      arg_shift = 1;
+    }
+  }
+
   title_id = argv[1];
+  if (find_pid(title_id) != -1) {
+    printf("%s is already running", title_id);
+    return 0;
+  }
+
   getcwd(src, PATH_MAX);
 
   strcpy(dst, "/system_ex/app/");
@@ -232,11 +234,28 @@ int main(int argc, char *argv[])
   mount_nullfs(src, dst);
   chmod_bins(src);
 
-  sceSystemServiceLaunchApp(title_id, &argv[2], &ctx);
+  sceSystemServiceLaunchApp(title_id, &argv[2 + arg_shift], &ctx);
   pid = find_pid(title_id);
 
-  if(!wait_for_exit(pid)) {
-    sleep(3);
+  if (pid != -1 && (kq = kqueue()) != -1) {
+    EV_SET(&evt, pid, EVFILT_PROC, EV_ADD, NOTE_EXIT, 0, NULL);
+    if (kevent(kq, &evt, 1, NULL, 0, NULL) != -1) {
+      struct timespec tout = {1, 0};
+      while((nev = kevent(kq, NULL, 0, &evt, 1, &tout)) == 0) {
+        if(kstuff > 0 && counter >= 0 && ++counter == kstuff) {
+          kstuff_toggle(0);
+          counter = -1;
+        }
+      }
+
+      if(kstuff > 0) {
+        kstuff_toggle(1);
+      }
+
+      if (nev > 0) {
+        sleep(3);
+      }
+    }
   }
 
   return unmount(dst, 0);
