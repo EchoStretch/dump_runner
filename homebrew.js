@@ -22,6 +22,7 @@ async function main() {
 		path: PAYLOAD,
 		cwd: CWD,
 		args: [PAYLOAD, param['titleId']],
+		//args: [PAYLOAD, param['titleId'], 'kstuff-toggle=15'],
 		daemon: true,
 	    };
         }
