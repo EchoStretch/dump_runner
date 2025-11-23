@@ -50,7 +50,7 @@ jobs:
         run: |
           mkdir -p release
           cp build_clean/dump_runner.elf          release/dump_runner.elf
-          cp build_kstuff/dump_runner.elf         release/dump_runner_toggle_enabled.elf
+          cp build_kstuff/dump_runner.elf         release/dump_runner_toggle_kstuff.elf
           cp homebrew.js                          release/homebrew.js 2>/dev/null || true
           echo "Build complete!"
           ls -la release/
