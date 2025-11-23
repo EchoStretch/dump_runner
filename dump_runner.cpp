@@ -14,6 +14,10 @@
 #define IOVEC_ENTRY(x) {x ? (char *)x : 0, x ? strlen(x) + 1 : 0}
 #define IOVEC_SIZE(x) (sizeof(x) / sizeof(struct iovec))
 
+#ifndef KSTUFF_DEFAULT
+#define KSTUFF_DEFAULT 0
+#endif
+
 typedef struct app_info {
   uint32_t app_id;
   uint64_t unknown1;
@@ -189,7 +193,7 @@ int main(int argc, char *argv[])
   const char *title_id;
   pid_t pid;
 
-  int kstuff = 0;
+  int kstuff = KSTUFF_DEFAULT;
   int counter = 0;
   int kq;
   struct kevent evt;
