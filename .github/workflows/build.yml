@@ -26,7 +26,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update -qq
-          sudo apt install -y build-essential clang-18 lld-18 xxd yasm nasm zip
+          sudo apt install -y build-essential clang-18 lld-18 xxd yasm nasm
 
       - name: Install PS5 Payload SDK
         run: |
@@ -38,18 +38,16 @@ jobs:
           export PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk
           make -j$(nproc)
 
-      - name: Package release
+      - name: Prepare release files
         run: |
           mkdir -p release
           cp dump_runner.elf release/
           cp homebrew.js release/ 2>/dev/null || true
-          cd release
-          zip dump_runner.zip dump_runner.elf homebrew.js
-          ls -la
+          ls -la release
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: dump_runner
-          path: release/dump_runner.zip
+          path: release/*
           if-no-files-found: error
