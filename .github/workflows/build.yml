@@ -18,6 +18,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -25,39 +26,30 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update -qq
-          sudo apt install -y build-essential clang-18 lld-18 xxd yasm nasm
+          sudo apt install -y build-essential clang-18 lld-18 xxd yasm nasm zip
 
       - name: Install PS5 Payload SDK
         run: |
           wget -q https://github.com/ps5-payload-dev/pacbrew-repo/releases/latest/download/ps5-payload-dev.tar.gz
           sudo tar xf ps5-payload-dev.tar.gz -C /
 
-      - name: Build dump_runner.elf (kstuff disabled)
+      - name: Build dump_runner.elf
         run: |
           export PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk
-          mkdir -p build_clean && cd build_clean
-          $PS5_PAYLOAD_SDK/bin/prospero-cmake -D KSTUFF_DEFAULT=0 ..
           make -j$(nproc)
 
-      - name: Build dump_runner_toggle_enabled.elf (kstuff enabled)
-        run: |
-          export PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk
-          mkdir -p build_kstuff && cd build_kstuff
-          $PS5_PAYLOAD_SDK/bin/prospero-cmake -D KSTUFF_DEFAULT=1 ..
-          make -j$(nproc)
-
-      - name: Prepare release files
+      - name: Package release
         run: |
           mkdir -p release
-          cp build_clean/dump_runner.elf          release/dump_runner.elf
-          cp build_kstuff/dump_runner.elf         release/dump_runner_toggle_kstuff.elf
-          cp homebrew.js                          release/homebrew.js 2>/dev/null || true
-          echo "Build complete!"
-          ls -la release/
+          cp dump_runner.elf release/
+          cp homebrew.js release/ 2>/dev/null || true
+          cd release
+          zip dump_runner.zip dump_runner.elf homebrew.js
+          ls -la
 
-      - name: Upload dump_runner (both versions)
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: dump_runner
-          path: release/*
+          path: release/dump_runner.zip
           if-no-files-found: error
