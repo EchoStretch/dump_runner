@@ -10,6 +10,7 @@
 #include <sys/mount.h>
 #include <sys/param.h>
 #include <errno.h>
+#include <limits.h>
 
 #define IOVEC_ENTRY(x) { (void*)(x), (x) ? strlen(x) + 1 : 0 }
 #define IOVEC_SIZE(x)  (sizeof(x) / sizeof(struct iovec))
@@ -88,43 +89,67 @@ static int extract_json_string(const char* json, const char* key,
     return 0;
 }
 
+typedef struct {
+    uint16_t key_offset;
+    uint16_t type;
+    uint32_t size;
+    uint32_t max_size;
+    uint32_t data_offset;
+} sfo_entry_t;
+
 static int read_title_id_from_sfo(const char* path,
                                  char* title_id,
-                                 size_t size) {
+                                 size_t size)
+{
     FILE* f = fopen(path, "rb");
     if (!f) return -1;
 
-    uint32_t magic;
-    fread(&magic, 4, 1, f);
-    if (magic != 0x00464653) {
+    uint32_t magic, version, key_off, data_off, count;
+    if (fread(&magic, 4, 1, f) != 1 ||
+        fread(&version, 4, 1, f) != 1 ||
+        fread(&key_off, 4, 1, f) != 1 ||
+        fread(&data_off, 4, 1, f) != 1 ||
+        fread(&count, 4, 1, f) != 1) {
         fclose(f);
         return -1;
     }
 
-    uint32_t key_off, data_off;
-    uint16_t num_entries;
+    if (magic != 0x46535000) { // "PSF\0"
+        fclose(f);
+        return -1;
+    }
 
-    fseek(f, 0x08, SEEK_SET);
-    fread(&key_off, 4, 1, f);
-    fread(&data_off, 4, 1, f);
-    fread(&num_entries, 2, 1, f);
+    for (uint32_t i = 0; i < count; i++) {
+        sfo_entry_t entry;
+        if (fseek(f, 0x14 + i * sizeof(sfo_entry_t), SEEK_SET) != 0) continue;
+        if (fread(&entry, sizeof(sfo_entry_t), 1, f) != 1) continue;
 
-    for (int i = 0; i < num_entries; i++) {
-        uint16_t key_offset;
-        uint32_t data_offset;
+        char key[128] = {};
+        if (fseek(f, key_off + entry.key_offset, SEEK_SET) != 0) continue;
+        if (fread(key, 1, sizeof(key) - 1, f) <= 0) continue;
 
-        fseek(f, key_off + i * 16 + 0x08, SEEK_SET);
-        fread(&key_offset, 2, 1, f);
-        fread(&data_offset, 4, 1, f);
+        // Remove trailing non-printables
+        for (int k = 0; k < sizeof(key); k++) {
+            if (key[k] == '\0' || !isprint(key[k])) {
+                key[k] = '\0';
+                break;
+            }
+        }
 
-        char key[32] = {};
-        fseek(f, key_off + key_offset, SEEK_SET);
-        fgets(key, sizeof(key), f);
+        if (strncmp(key, "TITLE_ID", 8) == 0) {
+            if (fseek(f, data_off + entry.data_offset, SEEK_SET) != 0) continue;
+            size_t rlen = (entry.size < size - 1) ? entry.size : size - 1;
+            if (fread(title_id, 1, rlen, f) <= 0) continue;
+            title_id[rlen] = '\0';
 
-        if (!strcmp(key, "TITLE_ID")) {
-            fseek(f, data_off + data_offset, SEEK_SET);
-            fgets(title_id, size, f);
-            title_id[strcspn(title_id, "\0\r\n")] = '\0';
+            // Trim trailing nulls/whitespace
+            for (int j = rlen - 1; j >= 0; j--) {
+                if (title_id[j] == '\0' || isspace(title_id[j]))
+                    title_id[j] = '\0';
+                else
+                    break;
+            }
+
             fclose(f);
             return 0;
         }
@@ -133,6 +158,7 @@ static int read_title_id_from_sfo(const char* path,
     fclose(f);
     return -1;
 }
+
 
 static int get_title_id(char* title_id, size_t size) {
     char cwd[PATH_MAX];
