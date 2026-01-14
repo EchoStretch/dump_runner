@@ -25,7 +25,7 @@ endif
 
 ELF := dump_runner.elf
 
-CFLAGS := -Wall -Werror -g -lSceSystemService -lSceUserService -lSceAppInstUtil
+CFLAGS := -Wall -Werror -lSceSystemService -lSceUserService -lSceAppInstUtil -lsqlite3
 
 all: $(ELF)
 
@@ -37,11 +37,3 @@ clean:
 
 test: $(ELF)
 	$(PS5_DEPLOY) -h $(PS5_HOST) -p $(PS5_PORT) $^
-
-debug: $(ELF)
-	gdb \
-	-ex "target extended-remote $(PS5_HOST):2159" \
-	-ex "file $(ELF)" \
-	-ex "remote put $(ELF) /data/$(ELF)" \
-	-ex "set remote exec-file /data/$(ELF)" \
-	-ex "start"

@@ -11,6 +11,7 @@
 #include <sys/param.h>
 #include <errno.h>
 #include <limits.h>
+#include <sqlite3.h>
 
 #define IOVEC_ENTRY(x) { (void*)(x), (x) ? strlen(x) + 1 : 0 }
 #define IOVEC_SIZE(x)  (sizeof(x) / sizeof(struct iovec))
@@ -26,6 +27,17 @@ extern "C" {
     int sceKernelSendNotificationRequest(int, notify_request_t*, size_t, int);
 }
 
+// ---------------- NOTIFY ----------------
+static void notify(const char* fmt, ...) {
+    notify_request_t req = {};
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(req.message, sizeof(req.message) - 1, fmt, args);
+    va_end(args);
+    sceKernelSendNotificationRequest(0, &req, sizeof(req), 0);
+}
+
+// ---------------- MOUNT HELPERS ----------------
 static int remount_system_ex(void) {
     struct iovec iov[] = {
         IOVEC_ENTRY("from"),      IOVEC_ENTRY("/dev/ssd0.system_ex"),
@@ -48,23 +60,155 @@ static int mount_nullfs(const char* src, const char* dst) {
     return nmount(iov, IOVEC_SIZE(iov), 0);
 }
 
-static void notify(const char* fmt, ...) {
-    notify_request_t req = {};
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(req.message, sizeof(req.message) - 1, fmt, args);
-    va_end(args);
-    sceKernelSendNotificationRequest(0, &req, sizeof(req), 0);
-}
-
 static int is_mounted(const char* path) {
     struct statfs sfs;
     if (statfs(path, &sfs) != 0)
         return 0;
-
     return strcmp(sfs.f_fstypename, "nullfs") == 0;
 }
 
+// ---------------- COPY DIRECTORY ----------------
+static int copy_dir(const char* src, const char* dst) {
+    if (mkdir(dst, 0755) && errno != EEXIST) {
+        printf("mkdir failed for %s\n", dst);
+        return -1;
+    }
+
+    DIR* d = opendir(src);
+    if (!d) return -1;
+
+    struct dirent* e;
+    char ss[PATH_MAX], dd[PATH_MAX];
+    struct stat st;
+
+    while ((e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+
+        snprintf(ss, sizeof(ss), "%s/%s", src, e->d_name);
+        snprintf(dd, sizeof(dd), "%s/%s", dst, e->d_name);
+
+        if (stat(ss, &st) != 0) continue;
+
+        if (S_ISDIR(st.st_mode)) {
+            copy_dir(ss, dd);
+        } else {
+            FILE* fs = fopen(ss, "rb");
+            if (!fs) continue;
+
+            FILE* fd = fopen(dd, "wb");
+            if (!fd) { fclose(fs); continue; }
+
+            char buf[8192];
+            size_t n;
+            while ((n = fread(buf, 1, sizeof(buf), fs)) > 0)
+                fwrite(buf, 1, n, fd);
+
+            fclose(fd);
+            fclose(fs);
+        }
+    }
+    closedir(d);
+    return 0;
+}
+
+// ---------------- COPY appmeta ----------------
+static int is_appmeta_file(const char* name) {
+    if (!strcasecmp(name, "param.json") ||
+        !strcasecmp(name, "param.sfo"))
+        return 1;
+
+    const char* ext = strrchr(name, '.');
+    if (!ext) return 0;
+
+    return !strcasecmp(ext, ".png") ||
+           !strcasecmp(ext, ".dds") ||
+           !strcasecmp(ext, ".at9");
+}
+
+static int copy_sce_sys_to_appmeta(const char* src, const char* title_id) {
+    char dst[PATH_MAX];
+    snprintf(dst, sizeof(dst), "/user/appmeta/%s", title_id);
+
+    mkdir("/user/appmeta", 0777);
+    mkdir(dst, 0755);
+
+    DIR* d = opendir(src);
+    if (!d) return -1;
+
+    struct dirent* e;
+    char ss[PATH_MAX], dd[PATH_MAX];
+    struct stat st;
+
+    while ((e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, ".."))
+            continue;
+
+        if (!is_appmeta_file(e->d_name))
+            continue;
+
+        snprintf(ss, sizeof(ss), "%s/%s", src, e->d_name);
+        snprintf(dd, sizeof(dd), "%s/%s", dst, e->d_name);
+
+        if (stat(ss, &st) != 0 || !S_ISREG(st.st_mode))
+            continue;
+
+        FILE* fs = fopen(ss, "rb");
+        if (!fs) continue;
+
+        FILE* fd = fopen(dd, "wb");
+        if (!fd) { fclose(fs); continue; }
+
+        char buf[8192];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof(buf), fs)) > 0)
+            fwrite(buf, 1, n, fd);
+
+        fclose(fd);
+        fclose(fs);
+    }
+
+    closedir(d);
+    return 0;
+}
+
+// ---------------- Get Icon Sound ----------------
+static int update_snd0info(const char* title_id) {
+    sqlite3* db = NULL;
+    sqlite3_stmt* stmt = NULL;
+    int ret = -1;
+
+    char db_path[] = "/system_data/priv/mms/app.db";
+
+    const char* sql =
+        "UPDATE tbl_contentinfo "
+        "SET snd0info = '/user/appmeta/' || ?1 || '/snd0.at9' "
+        "WHERE titleId = ?1;";
+
+    if (sqlite3_open(db_path, &db) != SQLITE_OK) {
+        printf("[snd0] Open failed: %s\n", sqlite3_errmsg(db));
+        goto out;
+    }
+
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        printf("[snd0] Prepare failed: %s\n", sqlite3_errmsg(db));
+        goto out;
+    }
+
+    sqlite3_bind_text(stmt, 1, title_id, -1, SQLITE_STATIC);
+
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        printf("[snd0] Step failed: %s\n", sqlite3_errmsg(db));
+    }
+
+    ret = sqlite3_changes(db);
+
+out:
+    if (stmt) sqlite3_finalize(stmt);
+    if (db) sqlite3_close(db);
+    return ret;
+}
+
+// ---------------- JSON HELPER ----------------
 static int extract_json_string(const char* json, const char* key,
                                char* out, size_t out_size) {
     char search[64];
@@ -89,6 +233,7 @@ static int extract_json_string(const char* json, const char* key,
     return 0;
 }
 
+// ---------------- SFO READER FOR PS4 ----------------
 typedef struct {
     uint16_t key_offset;
     uint16_t type;
@@ -159,7 +304,7 @@ static int read_title_id_from_sfo(const char* path,
     return -1;
 }
 
-
+// ---------------- GET TITLE_ID ----------------
 static int get_title_id(char* title_id, size_t size) {
     char cwd[PATH_MAX];
     char path[PATH_MAX];
@@ -167,6 +312,7 @@ static int get_title_id(char* title_id, size_t size) {
     if (!getcwd(cwd, sizeof(cwd)))
         return -1;
 
+    // Try param.json first (PS5)
     snprintf(path, sizeof(path), "%s/sce_sys/param.json", cwd);
     FILE* f = fopen(path, "rb");
     if (f) {
@@ -182,6 +328,7 @@ static int get_title_id(char* title_id, size_t size) {
 
                 if (extract_json_string(buf, "titleId", title_id, size) == 0 ||
                     extract_json_string(buf, "title_id", title_id, size) == 0) {
+                    title_id[strcspn(title_id, "\r\n")] = '\0';
                     free(buf);
                     fclose(f);
                     return 0;
@@ -192,10 +339,12 @@ static int get_title_id(char* title_id, size_t size) {
         fclose(f);
     }
 
+    // Fallback to param.sfo (PS4 CUSA)
     snprintf(path, sizeof(path), "%s/sce_sys/param.sfo", cwd);
     return read_title_id_from_sfo(path, title_id, size);
 }
 
+// ---------------- PATCH DRM (PS5 only) ----------------
 static int fix_application_drm_type(const char* path) {
     FILE* f = fopen(path, "rb");
     if (!f) return -1;
@@ -210,10 +359,7 @@ static int fix_application_drm_type(const char* path) {
     }
 
     char* buf = (char*)malloc(len + 1);
-    if (!buf) {
-        fclose(f);
-        return -1;
-    }
+    if (!buf) { fclose(f); return -1; }
 
     fread(buf, 1, len, f);
     buf[len] = '\0';
@@ -221,18 +367,12 @@ static int fix_application_drm_type(const char* path) {
 
     const char* key = "\"applicationDrmType\"";
     char* p = strstr(buf, key);
-    if (!p) {
-        free(buf);
-        return 0;
-    }
+    if (!p) { free(buf); return 0; }
 
     char* colon = strchr(p + strlen(key), ':');
     char* q1 = colon ? strchr(colon, '"') : NULL;
     char* q2 = q1 ? strchr(q1 + 1, '"') : NULL;
-    if (!q1 || !q2) {
-        free(buf);
-        return -1;
-    }
+    if (!q1 || !q2) { free(buf); return -1; }
 
     if ((q2 - q1 - 1) == strlen("standard") &&
         !strncmp(q1 + 1, "standard", strlen("standard"))) {
@@ -242,21 +382,14 @@ static int fix_application_drm_type(const char* path) {
 
     size_t new_len = (q1 - buf) + 1 + strlen("standard") + 1 + strlen(q2 + 1);
     char* out = (char*)malloc(new_len + 1);
-    if (!out) {
-        free(buf);
-        return -1;
-    }
+    if (!out) { free(buf); return -1; }
 
     memcpy(out, buf, q1 - buf + 1);
     memcpy(out + (q1 - buf + 1), "standard", strlen("standard"));
     strcpy(out + (q1 - buf + 1 + strlen("standard")), q2);
 
     f = fopen(path, "wb");
-    if (!f) {
-        free(buf);
-        free(out);
-        return -1;
-    }
+    if (!f) { free(buf); free(out); return -1; }
 
     fwrite(out, 1, strlen(out), f);
     fclose(f);
@@ -266,59 +399,7 @@ static int fix_application_drm_type(const char* path) {
     return 1;
 }
 
-static int copy_dir(const char* src, const char* dst) {
-    if (mkdir(dst, 0755) && errno != EEXIST) {
-        printf("mkdir failed for %s\n", dst);
-        return -1;
-    }
-
-    DIR* d = opendir(src);
-    if (!d) {
-        printf("opendir failed for %s\n", src);
-        return -1;
-    }
-
-    struct dirent* e;
-    char ss[PATH_MAX], dd[PATH_MAX];
-    struct stat st;
-
-    while ((e = readdir(d))) {
-        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
-
-        snprintf(ss, sizeof(ss), "%s/%s", src, e->d_name);
-        snprintf(dd, sizeof(dd), "%s/%s", dst, e->d_name);
-
-        if (stat(ss, &st) != 0) continue;
-
-        if (S_ISDIR(st.st_mode)) {
-            copy_dir(ss, dd);
-        } else {
-            FILE* fs = fopen(ss, "rb");
-            if (!fs) {
-                printf("Can't open source file: %s\n", ss);
-                continue;
-            }
-
-            FILE* fd = fopen(dd, "wb");
-            if (!fd) {
-                printf("Can't open dest file: %s\n", dd);
-                fclose(fs);
-                continue;
-            }
-
-            char buf[8192];
-            size_t n;
-            while ((n = fread(buf, 1, sizeof(buf), fs)) > 0)
-                fwrite(buf, 1, n, fd);
-
-            fclose(fd);
-            fclose(fs);
-        }
-    }
-    closedir(d);
-    return 0;
-}
-
+// ---------------- MAIN ----------------
 int main(void) {
     char cwd[PATH_MAX];
     char title_id[12] = {};
@@ -327,11 +408,11 @@ int main(void) {
     char user_sce_sys[PATH_MAX];
     char src_sce_sys[PATH_MAX];
     char mount_lnk_path[PATH_MAX];
-	char param_json_path[PATH_MAX];
+    char param_json_path[PATH_MAX];
 
-    notify("Welcome To Dump Runner 1.00 Beta");
-	printf("Welcome To Dump Runner 1.00 Beta\n");
-	
+    notify("Welcome To Dump Runner 1.01 Beta");
+    printf("Welcome To Dump Runner 1.01 Beta\n");
+
     if (!getcwd(cwd, sizeof(cwd))) {
         printf("Error: Unable to determine working directory\n");
         return -1;
@@ -343,28 +424,27 @@ int main(void) {
     }
 
     notify("Installing %s, please wait...", title_id);
-	printf("Installing %s, please wait...\n", title_id);
+    printf("Installing %s, please wait...\n", title_id);
 
     snprintf(param_json_path, sizeof(param_json_path),
              "%s/sce_sys/param.json", cwd);
-			 
+
     if (fix_application_drm_type(param_json_path) > 0)
         printf("applicationDrmType patched to standard\n");
-	
+
     snprintf(system_ex_app, sizeof(system_ex_app),
              "/system_ex/app/%s", title_id);
 
     mkdir(system_ex_app, 0755);
 
     if (is_mounted(system_ex_app)) {
-        printf("Removing existing mount: %s\n", system_ex_app);
         unmount(system_ex_app, 0);
     }
 
     remount_system_ex();
 
     if (mount_nullfs(cwd, system_ex_app)) {
-		notify("Failed to mount application");		
+        notify("Failed to mount application");
         printf("Error: Failed to mount application\n");
         return -1;
     }
@@ -380,28 +460,32 @@ int main(void) {
     snprintf(src_sce_sys, sizeof(src_sce_sys),
              "%s/sce_sys", cwd);
 
-    if (copy_dir(src_sce_sys, user_sce_sys)) {
-        printf("Warning: sce_sys copy failed (icon or title may be missing)\n");
-    }
+    copy_dir(src_sce_sys, user_sce_sys);
 
+    copy_sce_sys_to_appmeta(src_sce_sys, title_id);
+	
     sceAppInstUtilInitialize();
     if (sceAppInstUtilAppInstallTitleDir(title_id, "/user/app/", 0)) {
         notify("Application install failed");
         printf("Error: Application install failed\n");
         return -1;
     }
-	
+
     snprintf(mount_lnk_path, sizeof(mount_lnk_path), "/user/app/%s/mount.lnk", title_id);
 
     FILE* f = fopen(mount_lnk_path, "w");
-    if (!f) {
-        printf("Error: Failed to create mount link for %s: %s\n", mount_lnk_path, strerror(errno));
-    } else {
+    if (f) {
         fprintf(f, "%s", cwd);
         fclose(f);
-        printf("Mount link created: %s\n", mount_lnk_path);
     }
 
+    notify("Fixing Config, please wait...");
+    printf("Fixing Config, please wait...\n");
+	
+    //sleep before trying to edit app.db
+    sleep(3);
+    update_snd0info(title_id);
+	
     notify("%s installed and ready to use!", title_id);
     printf("%s installed and ready to use!\n", title_id);
     printf("The icon should now appear on the home screen.\n");
