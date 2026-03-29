@@ -110,6 +110,24 @@ kstuff_toggle(int enable) {
     sysentvec     = KERNEL_ADDRESS_DATA_BASE + 0xdba6d8;
     break;
 
+  case 0x11000000:
+  case 0x11200000:
+    sysentvec     = KERNEL_ADDRESS_DATA_BASE + 0xdcbc78;
+    break;
+
+  case 0x11400000:
+  case 0x11600000:
+    sysentvec     = KERNEL_ADDRESS_DATA_BASE + 0xdcbc98;
+    break;
+
+  case 0x12000000:
+  case 0x12020000:
+  case 0x12200000:
+  case 0x12400000:
+  case 0x12600000:
+    sysentvec     = KERNEL_ADDRESS_DATA_BASE + 0xdcc978;
+    break;
+
   default:
     notify("Unsupported firmware");
     return -1;
