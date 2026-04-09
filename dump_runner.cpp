@@ -92,49 +92,6 @@ int endswith(const char *string, const char *suffix)
   return strncmp(string + string_len - suffix_len, suffix, suffix_len) != 0;
 }
 
-int chmod_bins(const char *path)
-{
-  char buf[PATH_MAX + 1];
-  struct dirent *entry;
-  struct stat st;
-  DIR *dir;
-
-  if (stat(path, &st) != 0)
-  {
-    return -1;
-  }
-
-  if (endswith(path, ".prx") || endswith(path, ".sprx") || endswith(path, "/eboot.bin"))
-  {
-    chmod(path, 0755);
-  }
-
-  if (S_ISDIR(st.st_mode))
-  {
-    dir = opendir(path);
-    while (1)
-    {
-      entry = readdir(dir);
-      if (entry == nullptr)
-      {
-        break;
-      }
-
-      if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
-      {
-        continue;
-      }
-
-      sprintf(buf, "%s/%s", path, entry->d_name);
-      chmod_bins(buf);
-    }
-
-    closedir(dir);
-  }
-
-  return 0;
-}
-
 pid_t find_pid(const char* title_id)
 {
   int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PROC, 0};
@@ -236,7 +193,6 @@ int main(int argc, char *argv[])
   }
 
   mount_nullfs(src, dst);
-  chmod_bins(src);
 
   sceSystemServiceLaunchApp(title_id, &argv[2 + arg_shift], &ctx);
   pid = find_pid(title_id);
